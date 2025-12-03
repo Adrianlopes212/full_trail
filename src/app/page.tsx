@@ -1,84 +1,44 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { MapPin, Users, Store, AlertTriangle, Wrench, TrendingUp, Clock, Award, Mountain } from "lucide-react"
+import { store, type UserStats, type Trail } from "@/lib/store"
+import Header from "@/components/Header"
+import MobileNav from "@/components/MobileNav"
+import Link from "next/link"
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState("inicio")
-  const [stats] = useState({
-    trilhas: 0,
-    distancia: "0 km",
-    tempo: "0h 0min",
-    nivel: "Iniciante"
-  })
+  const [stats, setStats] = useState<UserStats>(store.getStats())
+  const [trails, setTrails] = useState<Trail[]>(store.getTrails())
 
-  const handleNewTrail = () => {
-    alert("Iniciando nova trilha! 🏔️")
-  }
-
-  const handleSquad = () => {
-    alert("Abrindo Esquadrão! 👥")
-  }
-
-  const handleStore = () => {
-    alert("Abrindo Loja Física! 🏪")
-  }
+  useEffect(() => {
+    const unsubscribe = store.subscribe(() => {
+      setStats(store.getStats())
+      setTrails(store.getTrails())
+    })
+    return unsubscribe
+  }, [])
 
   const handleSOS = () => {
-    alert("🚨 SOS ATIVADO! Enviando localização de emergência...")
+    if (confirm("🚨 Deseja ativar o SOS de emergência?\n\nIsso enviará sua localização para contatos de emergência.")) {
+      alert("✅ SOS ATIVADO!\n\n📍 Localização enviada para contatos de emergência\n📞 Serviços de resgate notificados")
+    }
   }
 
-  const handleMaintenance = () => {
-    alert("Abrindo Manutenção! 🔧")
+  const formatDistance = (km: number) => {
+    return km >= 1 ? `${km.toFixed(1)} km` : `${(km * 1000).toFixed(0)} m`
+  }
+
+  const formatTime = (minutes: number) => {
+    const hours = Math.floor(minutes / 60)
+    const mins = minutes % 60
+    return hours > 0 ? `${hours}h ${mins}min` : `${mins}min`
   }
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      {/* Header */}
-      <header className="border-b border-gray-800 bg-black/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Mountain className="w-8 h-8 text-orange-500" />
-              <h1 className="text-2xl font-bold">TrailMaster</h1>
-            </div>
-            <nav className="hidden md:flex items-center gap-6">
-              <button 
-                onClick={() => setActiveTab("inicio")}
-                className={`hover:text-orange-500 transition-colors ${activeTab === "inicio" ? "text-orange-500" : ""}`}
-              >
-                Início
-              </button>
-              <button 
-                onClick={() => setActiveTab("mapa")}
-                className={`hover:text-orange-500 transition-colors ${activeTab === "mapa" ? "text-orange-500" : ""}`}
-              >
-                Mapa
-              </button>
-              <button 
-                onClick={() => setActiveTab("trilhas")}
-                className={`hover:text-orange-500 transition-colors ${activeTab === "trilhas" ? "text-orange-500" : ""}`}
-              >
-                Trilhas
-              </button>
-              <button 
-                onClick={() => setActiveTab("comunidade")}
-                className={`hover:text-orange-500 transition-colors ${activeTab === "comunidade" ? "text-orange-500" : ""}`}
-              >
-                Comunidade
-              </button>
-              <button 
-                onClick={() => setActiveTab("perfil")}
-                className={`hover:text-orange-500 transition-colors ${activeTab === "perfil" ? "text-orange-500" : ""}`}
-              >
-                Perfil
-              </button>
-            </nav>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-black text-white pb-20 md:pb-0">
+      <Header />
 
-      {/* Main Content */}
       <main className="container mx-auto px-4 py-8">
         {/* Welcome Message */}
         <div className="mb-8">
@@ -92,24 +52,24 @@ export default function Home() {
 
         {/* Action Buttons */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-12">
-          <button 
-            onClick={handleNewTrail}
+          <Link 
+            href="/trilhas/nova"
             className="bg-orange-500 hover:bg-orange-600 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105 shadow-lg shadow-orange-500/20"
           >
             <MapPin className="w-8 h-8" />
             <span className="font-semibold">Nova Trilha</span>
-          </button>
+          </Link>
 
-          <button 
-            onClick={handleSquad}
+          <Link 
+            href="/comunidade"
             className="bg-gray-800 hover:bg-gray-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105"
           >
             <Users className="w-8 h-8" />
             <span className="font-semibold">Esquadrão</span>
-          </button>
+          </Link>
 
           <button 
-            onClick={handleStore}
+            onClick={() => alert("🏪 Loja Física em breve!\n\nEncontre equipamentos e acessórios para suas aventuras.")}
             className="bg-gray-800 hover:bg-gray-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105"
           >
             <Store className="w-8 h-8" />
@@ -125,7 +85,7 @@ export default function Home() {
           </button>
 
           <button 
-            onClick={handleMaintenance}
+            onClick={() => alert("🔧 Manutenção em breve!\n\nDicas e guias para cuidar dos seus equipamentos.")}
             className="bg-gray-800 hover:bg-gray-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105"
           >
             <Wrench className="w-8 h-8" />
@@ -135,7 +95,7 @@ export default function Home() {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
-          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl">
+          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
             <div className="flex items-center gap-3 mb-2">
               <Mountain className="w-6 h-6 text-orange-500" />
               <h3 className="text-gray-400 text-sm">Trilhas</h3>
@@ -143,83 +103,98 @@ export default function Home() {
             <p className="text-3xl font-bold">{stats.trilhas}</p>
           </div>
 
-          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl">
+          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
             <div className="flex items-center gap-3 mb-2">
               <TrendingUp className="w-6 h-6 text-orange-500" />
               <h3 className="text-gray-400 text-sm">Distância Total</h3>
             </div>
-            <p className="text-3xl font-bold">{stats.distancia}</p>
+            <p className="text-3xl font-bold">{formatDistance(stats.distancia)}</p>
           </div>
 
-          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl">
+          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
             <div className="flex items-center gap-3 mb-2">
               <Clock className="w-6 h-6 text-orange-500" />
               <h3 className="text-gray-400 text-sm">Tempo Total</h3>
             </div>
-            <p className="text-3xl font-bold">{stats.tempo}</p>
+            <p className="text-3xl font-bold">{formatTime(stats.tempo)}</p>
           </div>
 
-          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl">
+          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
             <div className="flex items-center gap-3 mb-2">
               <Award className="w-6 h-6 text-orange-500" />
               <h3 className="text-gray-400 text-sm">Nível</h3>
             </div>
             <p className="text-3xl font-bold">{stats.nivel}</p>
+            <p className="text-xs text-gray-500 mt-1">{stats.pontos} pontos</p>
           </div>
         </div>
 
         {/* Recent Trails Section */}
         <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8">
-          <h3 className="text-2xl font-bold mb-6">Trilhas Recentes</h3>
-          
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <Mountain className="w-16 h-16 text-gray-700 mb-4" />
-            <p className="text-gray-400 mb-6">
-              Você ainda não gravou nenhuma trilha
-            </p>
-            <button 
-              onClick={handleNewTrail}
-              className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-3 rounded-xl font-semibold transition-all hover:scale-105 shadow-lg shadow-orange-500/20"
-            >
-              Gravar Primeira Trilha
-            </button>
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-2xl font-bold">Trilhas Recentes</h3>
+            {trails.length > 0 && (
+              <Link 
+                href="/trilhas"
+                className="text-orange-500 hover:text-orange-400 text-sm font-semibold"
+              >
+                Ver todas →
+              </Link>
+            )}
           </div>
+          
+          {trails.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Mountain className="w-16 h-16 text-gray-700 mb-4" />
+              <p className="text-gray-400 mb-6">
+                Você ainda não gravou nenhuma trilha
+              </p>
+              <Link 
+                href="/trilhas/nova"
+                className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-3 rounded-xl font-semibold transition-all hover:scale-105 shadow-lg shadow-orange-500/20"
+              >
+                Gravar Primeira Trilha
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {trails.slice(0, 3).map((trail) => (
+                <div 
+                  key={trail.id}
+                  className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-orange-500/50 transition-colors"
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h4 className="font-semibold text-lg">{trail.name}</h4>
+                      <p className="text-sm text-gray-400">{trail.location}</p>
+                    </div>
+                    <span className={`text-xs px-3 py-1 rounded-full ${
+                      trail.difficulty === "Fácil" ? "bg-green-500/20 text-green-400" :
+                      trail.difficulty === "Moderada" ? "bg-yellow-500/20 text-yellow-400" :
+                      "bg-red-500/20 text-red-400"
+                    }`}>
+                      {trail.difficulty}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-gray-400">
+                    <span className="flex items-center gap-1">
+                      <TrendingUp className="w-4 h-4" />
+                      {formatDistance(trail.distance)}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-4 h-4" />
+                      {formatTime(trail.duration)}
+                    </span>
+                    <span className="ml-auto">{new Date(trail.date).toLocaleDateString('pt-BR')}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 
-      {/* Mobile Navigation */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-gray-900 border-t border-gray-800 px-4 py-3">
-        <div className="flex items-center justify-around">
-          <button 
-            onClick={() => setActiveTab("inicio")}
-            className={`flex flex-col items-center gap-1 ${activeTab === "inicio" ? "text-orange-500" : "text-gray-400"}`}
-          >
-            <Mountain className="w-6 h-6" />
-            <span className="text-xs">Início</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab("mapa")}
-            className={`flex flex-col items-center gap-1 ${activeTab === "mapa" ? "text-orange-500" : "text-gray-400"}`}
-          >
-            <MapPin className="w-6 h-6" />
-            <span className="text-xs">Mapa</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab("trilhas")}
-            className={`flex flex-col items-center gap-1 ${activeTab === "trilhas" ? "text-orange-500" : "text-gray-400"}`}
-          >
-            <TrendingUp className="w-6 h-6" />
-            <span className="text-xs">Trilhas</span>
-          </button>
-          <button 
-            onClick={() => setActiveTab("comunidade")}
-            className={`flex flex-col items-center gap-1 ${activeTab === "comunidade" ? "text-orange-500" : "text-gray-400"}`}
-          >
-            <Users className="w-6 h-6" />
-            <span className="text-xs">Comunidade</span>
-          </button>
-        </div>
-      </nav>
+      <MobileNav />
     </div>
   )
 }
