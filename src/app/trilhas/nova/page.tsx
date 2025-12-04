@@ -1,183 +1,374 @@
 "use client"
 
-import { useState, FormEvent } from "react"
-import { useRouter } from "next/navigation"
-import { store } from "@/lib/store"
+import { useState, useEffect, useRef } from "react"
+import dynamic from "next/dynamic"
+import { supabase } from "@/lib/supabase"
 import Header from "@/components/Header"
 import MobileNav from "@/components/MobileNav"
-import { MapPin, Clock, TrendingUp, Mountain, Save } from "lucide-react"
+import { Play, Pause, Square, Navigation } from "lucide-react"
+import { useRouter } from "next/navigation"
 
-export default function NovaTrilha() {
+// Importação dinâmica do mapa para evitar SSR
+const MapComponent = dynamic(() => import("@/components/MapTracker"), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-[400px] bg-gray-900 rounded-2xl flex items-center justify-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-orange-500"></div>
+    </div>
+  ),
+})
+
+type TrailPoint = {
+  latitude: number
+  longitude: number
+  altitude: number | null
+  timestamp: string
+}
+
+type RecordingState = "idle" | "recording" | "paused"
+
+export default function GravarTrilhaPage() {
   const router = useRouter()
-  const [isRecording, setIsRecording] = useState(false)
-  const [formData, setFormData] = useState({
-    name: "",
-    location: "",
-    distance: "",
-    duration: "",
-    difficulty: "Fácil" as "Fácil" | "Moderada" | "Difícil"
-  })
+  const [state, setState] = useState<RecordingState>("idle")
+  const [pontosDaTrilha, setPontosDaTrilha] = useState<TrailPoint[]>([])
+  const [currentPosition, setCurrentPosition] = useState<{ lat: number; lng: number } | null>(null)
+  const [distanciaTotal, setDistanciaTotal] = useState(0) // em km
+  const [velocidadeAtual, setVelocidadeAtual] = useState(0) // em km/h
+  const [velocidadeMaxima, setVelocidadeMaxima] = useState(0) // em km/h
+  const [tempoTotal, setTempoTotal] = useState(0) // em segundos
+  const [permissionGranted, setPermissionGranted] = useState(false)
 
-  const handleSubmit = (e: FormEvent) => {
-    e.preventDefault()
-    
-    if (!formData.name || !formData.location || !formData.distance || !formData.duration) {
-      alert("⚠️ Preencha todos os campos!")
+  const watchIdRef = useRef<number | null>(null)
+  const startTimeRef = useRef<number | null>(null)
+  const pausedTimeRef = useRef<number>(0)
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const lastPositionRef = useRef<{ lat: number; lng: number; timestamp: number } | null>(null)
+
+  // Solicitar permissão de localização ao montar
+  useEffect(() => {
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          setPermissionGranted(true)
+          setCurrentPosition({
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          })
+        },
+        (error) => {
+          console.error("Erro ao obter localização:", error)
+          alert("⚠️ Permissão de localização negada. Ative o GPS para gravar trilhas.")
+        },
+        { enableHighAccuracy: true }
+      )
+    } else {
+      alert("❌ Seu navegador não suporta geolocalização")
+    }
+
+    return () => {
+      if (watchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(watchIdRef.current)
+      }
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current)
+      }
+    }
+  }, [])
+
+  // Calcular distância entre dois pontos (Haversine)
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371 // Raio da Terra em km
+    const dLat = ((lat2 - lat1) * Math.PI) / 180
+    const dLon = ((lon2 - lon1) * Math.PI) / 180
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2)
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+    return R * c
+  }
+
+  // Calcular velocidade
+  const calculateSpeed = (distance: number, timeInSeconds: number): number => {
+    if (timeInSeconds === 0) return 0
+    return (distance / timeInSeconds) * 3600 // km/h
+  }
+
+  // Iniciar gravação
+  const handleIniciar = () => {
+    if (!permissionGranted) {
+      alert("⚠️ Permissão de localização necessária")
       return
     }
 
-    store.addTrail({
-      name: formData.name,
-      location: formData.location,
-      distance: parseFloat(formData.distance),
-      duration: parseInt(formData.duration),
-      difficulty: formData.difficulty,
-      date: new Date().toISOString()
-    })
+    setState("recording")
+    startTimeRef.current = Date.now() - pausedTimeRef.current * 1000
+    
+    // Iniciar cronômetro
+    timerIntervalRef.current = setInterval(() => {
+      if (startTimeRef.current) {
+        const elapsed = Math.floor((Date.now() - startTimeRef.current) / 1000)
+        setTempoTotal(elapsed)
+      }
+    }, 1000)
 
-    alert("✅ Trilha salva com sucesso!")
-    router.push("/trilhas")
+    // Iniciar tracking de GPS
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      (position) => {
+        const newPoint: TrailPoint = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          altitude: position.coords.altitude,
+          timestamp: new Date().toISOString(),
+        }
+
+        setCurrentPosition({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        })
+
+        setPontosDaTrilha((prev) => {
+          const updated = [...prev, newPoint]
+
+          // Calcular distância se houver ponto anterior
+          if (prev.length > 0) {
+            const lastPoint = prev[prev.length - 1]
+            const distance = calculateDistance(
+              lastPoint.latitude,
+              lastPoint.longitude,
+              newPoint.latitude,
+              newPoint.longitude
+            )
+            setDistanciaTotal((prevDist) => prevDist + distance)
+
+            // Calcular velocidade atual
+            if (lastPositionRef.current) {
+              const timeDiff = (Date.now() - lastPositionRef.current.timestamp) / 1000 // segundos
+              const speed = calculateSpeed(distance, timeDiff)
+              setVelocidadeAtual(speed)
+              
+              // Atualizar velocidade máxima
+              if (speed > velocidadeMaxima) {
+                setVelocidadeMaxima(speed)
+              }
+            }
+          }
+
+          lastPositionRef.current = {
+            lat: newPoint.latitude,
+            lng: newPoint.longitude,
+            timestamp: Date.now(),
+          }
+
+          return updated
+        })
+      },
+      (error) => {
+        console.error("Erro no GPS:", error)
+      },
+      {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 5000,
+      }
+    )
   }
 
-  const startRecording = () => {
-    setIsRecording(true)
-    alert("🎯 Gravação iniciada!\n\nSeu GPS está rastreando a trilha.\nClique em 'Parar Gravação' quando terminar.")
+  // Pausar gravação
+  const handlePausar = () => {
+    setState("paused")
+    pausedTimeRef.current = tempoTotal
+
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current)
+      watchIdRef.current = null
+    }
+
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current)
+      timerIntervalRef.current = null
+    }
   }
 
-  const stopRecording = () => {
-    setIsRecording(false)
-    // Simula dados de uma trilha gravada
-    setFormData({
-      ...formData,
-      distance: "5.2",
-      duration: "120"
-    })
-    alert("⏸️ Gravação pausada!\n\nPreencha os detalhes da trilha abaixo.")
+  // Retomar gravação
+  const handleRetomar = () => {
+    handleIniciar()
+  }
+
+  // Finalizar e salvar
+  const handleFinalizar = async () => {
+    if (pontosDaTrilha.length === 0) {
+      alert("⚠️ Nenhum ponto gravado ainda")
+      return
+    }
+
+    // Parar tracking
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current)
+    }
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current)
+    }
+
+    // Calcular velocidade média
+    const velocidadeMedia = tempoTotal > 0 ? (distanciaTotal / tempoTotal) * 3600 : 0
+
+    // Criar nome automático
+    const now = new Date()
+    const nomeTrilha = `Trilha - ${now.toLocaleDateString("pt-BR")} ${now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`
+
+    try {
+      const { data, error } = await supabase.from("trilhas").insert({
+        nome: nomeTrilha,
+        data: now.toISOString(),
+        tempo_total: tempoTotal,
+        distancia_total: distanciaTotal,
+        velocidade_media: velocidadeMedia,
+        velocidade_maxima: velocidadeMaxima,
+        pontos_gps: pontosDaTrilha,
+      }).select()
+
+      if (error) throw error
+
+      alert("✅ Trilha salva com sucesso!")
+      router.push("/trilhas")
+    } catch (error) {
+      console.error("Erro ao salvar trilha:", error)
+      alert("❌ Erro ao salvar trilha")
+    }
+  }
+
+  const formatDistance = (km: number) => {
+    return km >= 1 ? `${km.toFixed(2)} km` : `${(km * 1000).toFixed(0)} m`
+  }
+
+  const formatTime = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    const secs = seconds % 60
+    return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
+  }
+
+  const formatSpeed = (kmh: number) => {
+    return `${kmh.toFixed(1)} km/h`
   }
 
   return (
     <div className="min-h-screen bg-black text-white pb-20 md:pb-0">
       <Header />
 
-      <main className="container mx-auto px-4 py-8 max-w-2xl">
-        <div className="mb-8">
-          <h2 className="text-4xl font-bold mb-2">Nova Trilha</h2>
-          <p className="text-gray-400">Registre sua aventura</p>
+      <main className="container mx-auto px-4 py-8">
+        <div className="mb-6">
+          <h2 className="text-4xl font-bold mb-2">Gravar Trilha</h2>
+          <p className="text-gray-400">Acompanhe sua trilha em tempo real</p>
         </div>
 
-        {/* Recording Button */}
-        <div className="mb-8">
-          {!isRecording ? (
+        {/* Mapa */}
+        <div className="mb-6">
+          <MapComponent
+            currentPosition={currentPosition}
+            pontosDaTrilha={pontosDaTrilha}
+            isRecording={state === "recording"}
+          />
+        </div>
+
+        {/* Estatísticas em tempo real */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <p className="text-gray-400 text-sm mb-1">Distância</p>
+            <p className="text-3xl font-bold text-orange-500">{formatDistance(distanciaTotal)}</p>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <p className="text-gray-400 text-sm mb-1">Velocidade</p>
+            <p className="text-3xl font-bold text-orange-500">{formatSpeed(velocidadeAtual)}</p>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <p className="text-gray-400 text-sm mb-1">Tempo</p>
+            <p className="text-3xl font-bold text-orange-500">{formatTime(tempoTotal)}</p>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <p className="text-gray-400 text-sm mb-1">Vel. Máx</p>
+            <p className="text-3xl font-bold text-orange-500">{formatSpeed(velocidadeMaxima)}</p>
+          </div>
+        </div>
+
+        {/* Botões de controle */}
+        <div className="flex flex-col gap-4">
+          {state === "idle" && (
             <button
-              onClick={startRecording}
-              className="w-full bg-orange-500 hover:bg-orange-600 text-white p-6 rounded-2xl flex items-center justify-center gap-3 transition-all hover:scale-105 shadow-lg shadow-orange-500/20"
+              onClick={handleIniciar}
+              disabled={!permissionGranted}
+              className="bg-green-500 hover:bg-green-600 disabled:bg-gray-700 disabled:cursor-not-allowed text-white px-8 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 shadow-lg shadow-green-500/20 flex items-center justify-center gap-3"
             >
-              <MapPin className="w-6 h-6" />
-              <span className="font-semibold text-lg">Iniciar Gravação GPS</span>
+              <Play className="w-6 h-6" />
+              Iniciar Gravação
             </button>
-          ) : (
-            <button
-              onClick={stopRecording}
-              className="w-full bg-red-600 hover:bg-red-700 text-white p-6 rounded-2xl flex items-center justify-center gap-3 transition-all animate-pulse"
-            >
-              <div className="w-3 h-3 bg-white rounded-full animate-pulse" />
-              <span className="font-semibold text-lg">Gravando... (Clique para parar)</span>
-            </button>
+          )}
+
+          {state === "recording" && (
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={handlePausar}
+                className="bg-yellow-500 hover:bg-yellow-600 text-white px-8 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-3"
+              >
+                <Pause className="w-6 h-6" />
+                Pausar
+              </button>
+              <button
+                onClick={handleFinalizar}
+                className="bg-red-500 hover:bg-red-600 text-white px-8 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 shadow-lg shadow-red-500/20 flex items-center justify-center gap-3"
+              >
+                <Square className="w-6 h-6" />
+                Finalizar
+              </button>
+            </div>
+          )}
+
+          {state === "paused" && (
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={handleRetomar}
+                className="bg-green-500 hover:bg-green-600 text-white px-8 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 shadow-lg shadow-green-500/20 flex items-center justify-center gap-3"
+              >
+                <Play className="w-6 h-6" />
+                Retomar
+              </button>
+              <button
+                onClick={handleFinalizar}
+                className="bg-red-500 hover:bg-red-600 text-white px-8 py-4 rounded-xl font-bold text-lg transition-all hover:scale-105 shadow-lg shadow-red-500/20 flex items-center justify-center gap-3"
+              >
+                <Square className="w-6 h-6" />
+                Finalizar
+              </button>
+            </div>
           )}
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 space-y-6">
+        {/* Info de permissão */}
+        {!permissionGranted && (
+          <div className="mt-6 bg-yellow-500/10 border border-yellow-500/30 rounded-xl p-4 flex items-start gap-3">
+            <Navigation className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
             <div>
-              <label className="block text-sm font-semibold mb-2">Nome da Trilha</label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                placeholder="Ex: Trilha da Pedra Grande"
-                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:border-orange-500 transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold mb-2">Localização</label>
-              <input
-                type="text"
-                value={formData.location}
-                onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                placeholder="Ex: Serra da Mantiqueira, SP"
-                className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:border-orange-500 transition-colors"
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-semibold mb-2 flex items-center gap-2">
-                  <TrendingUp className="w-4 h-4" />
-                  Distância (km)
-                </label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={formData.distance}
-                  onChange={(e) => setFormData({ ...formData, distance: e.target.value })}
-                  placeholder="5.2"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:border-orange-500 transition-colors"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-semibold mb-2 flex items-center gap-2">
-                  <Clock className="w-4 h-4" />
-                  Duração (min)
-                </label>
-                <input
-                  type="number"
-                  value={formData.duration}
-                  onChange={(e) => setFormData({ ...formData, duration: e.target.value })}
-                  placeholder="120"
-                  className="w-full bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 focus:outline-none focus:border-orange-500 transition-colors"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-semibold mb-2 flex items-center gap-2">
-                <Mountain className="w-4 h-4" />
-                Dificuldade
-              </label>
-              <div className="grid grid-cols-3 gap-3">
-                {(["Fácil", "Moderada", "Difícil"] as const).map((level) => (
-                  <button
-                    key={level}
-                    type="button"
-                    onClick={() => setFormData({ ...formData, difficulty: level })}
-                    className={`py-3 rounded-xl font-semibold transition-all ${
-                      formData.difficulty === level
-                        ? level === "Fácil"
-                          ? "bg-green-500 text-white"
-                          : level === "Moderada"
-                          ? "bg-yellow-500 text-white"
-                          : "bg-red-500 text-white"
-                        : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-                    }`}
-                  >
-                    {level}
-                  </button>
-                ))}
-              </div>
+              <p className="text-yellow-500 font-semibold mb-1">Permissão de localização necessária</p>
+              <p className="text-gray-400 text-sm">
+                Ative o GPS e permita o acesso à localização para gravar trilhas.
+              </p>
             </div>
           </div>
+        )}
 
-          <button
-            type="submit"
-            className="w-full bg-orange-500 hover:bg-orange-600 text-white p-4 rounded-xl font-semibold transition-all hover:scale-105 shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2"
-          >
-            <Save className="w-5 h-5" />
-            Salvar Trilha
-          </button>
-        </form>
+        {/* Pontos coletados */}
+        {pontosDaTrilha.length > 0 && (
+          <div className="mt-6 bg-gray-900 border border-gray-800 rounded-2xl p-6">
+            <p className="text-gray-400 text-sm mb-2">Pontos coletados</p>
+            <p className="text-2xl font-bold text-orange-500">{pontosDaTrilha.length}</p>
+          </div>
+        )}
       </main>
 
       <MobileNav />

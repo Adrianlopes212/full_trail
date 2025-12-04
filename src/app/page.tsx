@@ -1,27 +1,77 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { MapPin, Users, Store, AlertTriangle, Wrench, TrendingUp, Clock, Award, Mountain } from "lucide-react"
-import { store, type UserStats, type Trail } from "@/lib/store"
+import { MapPin, Users, Store, AlertTriangle, Wrench, TrendingUp, Clock, Award, Mountain, Bike } from "lucide-react"
+import { supabase } from "@/lib/supabase"
 import Header from "@/components/Header"
 import MobileNav from "@/components/MobileNav"
-import Link from "next/link"
+import { useRouter } from "next/navigation"
+
+type Moto = {
+  id: string
+  nome: string
+  modelo: string
+  cilindrada: number
+  ano: number
+  km_atual: number
+}
+
+type Trail = {
+  id: string
+  nome: string
+  data: string
+  tempo_total: number
+  distancia_total: number
+  velocidade_media: number
+  velocidade_maxima: number
+  dificuldade?: string
+}
 
 export default function Home() {
-  const [stats, setStats] = useState<UserStats>(store.getStats())
-  const [trails, setTrails] = useState<Trail[]>(store.getTrails())
+  const router = useRouter()
+  const [motos, setMotos] = useState<Moto[]>([])
+  const [trails, setTrails] = useState<Trail[]>([])
+  const [stats, setStats] = useState({
+    totalMotos: 0,
+    totalTrilhas: 0,
+    distanciaTotal: 0,
+    tempoTotal: 0
+  })
 
   useEffect(() => {
-    const unsubscribe = store.subscribe(() => {
-      setStats(store.getStats())
-      setTrails(store.getTrails())
-    })
-    return unsubscribe
+    carregarDados()
   }, [])
 
-  const handleSOS = () => {
-    if (confirm("🚨 Deseja ativar o SOS de emergência?\n\nIsso enviará sua localização para contatos de emergência.")) {
-      alert("✅ SOS ATIVADO!\n\n📍 Localização enviada para contatos de emergência\n📞 Serviços de resgate notificados")
+  const carregarDados = async () => {
+    // Carregar motos
+    const { data: motosData } = await supabase
+      .from('motos')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(3)
+
+    if (motosData) setMotos(motosData)
+
+    // Carregar trilhas
+    const { data: trilhasData } = await supabase
+      .from('trilhas')
+      .select('*')
+      .order('data', { ascending: false })
+      .limit(3)
+
+    if (trilhasData) {
+      setTrails(trilhasData)
+      
+      // Calcular estatísticas
+      const distanciaTotal = trilhasData.reduce((acc, t) => acc + parseFloat(t.distancia_total.toString()), 0)
+      const tempoTotal = trilhasData.reduce((acc, t) => acc + t.tempo_total, 0)
+      
+      setStats({
+        totalMotos: motosData?.length || 0,
+        totalTrilhas: trilhasData.length,
+        distanciaTotal,
+        tempoTotal
+      })
     }
   }
 
@@ -52,24 +102,32 @@ export default function Home() {
 
         {/* Action Buttons */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-12">
-          <Link 
-            href="/trilhas/nova"
+          <button 
+            onClick={() => router.push('/trilhas/nova')}
             className="bg-orange-500 hover:bg-orange-600 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105 shadow-lg shadow-orange-500/20"
           >
             <MapPin className="w-8 h-8" />
             <span className="font-semibold">Nova Trilha</span>
-          </Link>
+          </button>
 
-          <Link 
-            href="/comunidade"
+          <button 
+            onClick={() => router.push('/motos/nova')}
+            className="bg-gray-800 hover:bg-gray-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105"
+          >
+            <Bike className="w-8 h-8" />
+            <span className="font-semibold">Minhas Motos</span>
+          </button>
+
+          <button 
+            onClick={() => router.push('/esquadrao')}
             className="bg-gray-800 hover:bg-gray-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105"
           >
             <Users className="w-8 h-8" />
             <span className="font-semibold">Esquadrão</span>
-          </Link>
+          </button>
 
           <button 
-            onClick={() => alert("🏪 Loja Física em breve!\n\nEncontre equipamentos e acessórios para suas aventuras.")}
+            onClick={() => router.push('/lojas')}
             className="bg-gray-800 hover:bg-gray-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105"
           >
             <Store className="w-8 h-8" />
@@ -77,15 +135,7 @@ export default function Home() {
           </button>
 
           <button 
-            onClick={handleSOS}
-            className="bg-red-600 hover:bg-red-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105 shadow-lg shadow-red-600/20"
-          >
-            <AlertTriangle className="w-8 h-8" />
-            <span className="font-semibold">SOS</span>
-          </button>
-
-          <button 
-            onClick={() => alert("🔧 Manutenção em breve!\n\nDicas e guias para cuidar dos seus equipamentos.")}
+            onClick={() => router.push('/manutencao')}
             className="bg-gray-800 hover:bg-gray-700 text-white p-6 rounded-2xl flex flex-col items-center gap-3 transition-all hover:scale-105"
           >
             <Wrench className="w-8 h-8" />
@@ -97,10 +147,18 @@ export default function Home() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-12">
           <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
             <div className="flex items-center gap-3 mb-2">
+              <Bike className="w-6 h-6 text-orange-500" />
+              <h3 className="text-gray-400 text-sm">Motos</h3>
+            </div>
+            <p className="text-3xl font-bold">{stats.totalMotos}</p>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
+            <div className="flex items-center gap-3 mb-2">
               <Mountain className="w-6 h-6 text-orange-500" />
               <h3 className="text-gray-400 text-sm">Trilhas</h3>
             </div>
-            <p className="text-3xl font-bold">{stats.trilhas}</p>
+            <p className="text-3xl font-bold">{stats.totalTrilhas}</p>
           </div>
 
           <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
@@ -108,7 +166,7 @@ export default function Home() {
               <TrendingUp className="w-6 h-6 text-orange-500" />
               <h3 className="text-gray-400 text-sm">Distância Total</h3>
             </div>
-            <p className="text-3xl font-bold">{formatDistance(stats.distancia)}</p>
+            <p className="text-3xl font-bold">{formatDistance(stats.distanciaTotal)}</p>
           </div>
 
           <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
@@ -116,17 +174,59 @@ export default function Home() {
               <Clock className="w-6 h-6 text-orange-500" />
               <h3 className="text-gray-400 text-sm">Tempo Total</h3>
             </div>
-            <p className="text-3xl font-bold">{formatTime(stats.tempo)}</p>
+            <p className="text-3xl font-bold">{formatTime(stats.tempoTotal)}</p>
           </div>
+        </div>
 
-          <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl hover:border-orange-500/50 transition-colors">
-            <div className="flex items-center gap-3 mb-2">
-              <Award className="w-6 h-6 text-orange-500" />
-              <h3 className="text-gray-400 text-sm">Nível</h3>
-            </div>
-            <p className="text-3xl font-bold">{stats.nivel}</p>
-            <p className="text-xs text-gray-500 mt-1">{stats.pontos} pontos</p>
+        {/* Minhas Motos Section */}
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-8 mb-8">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-2xl font-bold">Minhas Motos</h3>
+            <button 
+              onClick={() => router.push('/motos')}
+              className="text-orange-500 hover:text-orange-400 text-sm font-semibold"
+            >
+              Ver todas →
+            </button>
           </div>
+          
+          {motos.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Bike className="w-16 h-16 text-gray-700 mb-4" />
+              <p className="text-gray-400 mb-6">
+                Você ainda não cadastrou nenhuma moto
+              </p>
+              <button 
+                onClick={() => router.push('/motos/nova')}
+                className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-3 rounded-xl font-semibold transition-all hover:scale-105 shadow-lg shadow-orange-500/20"
+              >
+                Cadastrar Primeira Moto
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {motos.map((moto) => (
+                <div 
+                  key={moto.id}
+                  onClick={() => router.push(`/motos/${moto.id}`)}
+                  className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-orange-500/50 transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-3 mb-3">
+                    <Bike className="w-8 h-8 text-orange-500" />
+                    <div>
+                      <h4 className="font-semibold text-lg">{moto.nome}</h4>
+                      <p className="text-sm text-gray-400">{moto.modelo}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-gray-400">
+                    <span>{moto.cilindrada}cc</span>
+                    <span>{moto.ano}</span>
+                    <span>{moto.km_atual.toLocaleString()} km</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Recent Trails Section */}
@@ -134,12 +234,12 @@ export default function Home() {
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-2xl font-bold">Trilhas Recentes</h3>
             {trails.length > 0 && (
-              <Link 
-                href="/trilhas"
+              <button 
+                onClick={() => router.push('/trilhas')}
                 className="text-orange-500 hover:text-orange-400 text-sm font-semibold"
               >
                 Ver todas →
-              </Link>
+              </button>
             )}
           </div>
           
@@ -149,43 +249,45 @@ export default function Home() {
               <p className="text-gray-400 mb-6">
                 Você ainda não gravou nenhuma trilha
               </p>
-              <Link 
-                href="/trilhas/nova"
+              <button 
+                onClick={() => router.push('/trilhas/nova')}
                 className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-3 rounded-xl font-semibold transition-all hover:scale-105 shadow-lg shadow-orange-500/20"
               >
                 Gravar Primeira Trilha
-              </Link>
+              </button>
             </div>
           ) : (
             <div className="space-y-4">
-              {trails.slice(0, 3).map((trail) => (
+              {trails.map((trail) => (
                 <div 
                   key={trail.id}
-                  className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-orange-500/50 transition-colors"
+                  onClick={() => router.push(`/trilhas/${trail.id}`)}
+                  className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-orange-500/50 transition-colors cursor-pointer"
                 >
                   <div className="flex items-start justify-between mb-2">
                     <div>
-                      <h4 className="font-semibold text-lg">{trail.name}</h4>
-                      <p className="text-sm text-gray-400">{trail.location}</p>
+                      <h4 className="font-semibold text-lg">{trail.nome}</h4>
+                      <p className="text-sm text-gray-400">{new Date(trail.data).toLocaleDateString('pt-BR')}</p>
                     </div>
-                    <span className={`text-xs px-3 py-1 rounded-full ${
-                      trail.difficulty === "Fácil" ? "bg-green-500/20 text-green-400" :
-                      trail.difficulty === "Moderada" ? "bg-yellow-500/20 text-yellow-400" :
-                      "bg-red-500/20 text-red-400"
-                    }`}>
-                      {trail.difficulty}
-                    </span>
+                    {trail.dificuldade && (
+                      <span className={`text-xs px-3 py-1 rounded-full ${
+                        trail.dificuldade === "Fácil" ? "bg-green-500/20 text-green-400" :
+                        trail.dificuldade === "Moderada" ? "bg-yellow-500/20 text-yellow-400" :
+                        "bg-red-500/20 text-red-400"
+                      }`}>
+                        {trail.dificuldade}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-4 text-sm text-gray-400">
                     <span className="flex items-center gap-1">
                       <TrendingUp className="w-4 h-4" />
-                      {formatDistance(trail.distance)}
+                      {formatDistance(parseFloat(trail.distancia_total.toString()))}
                     </span>
                     <span className="flex items-center gap-1">
                       <Clock className="w-4 h-4" />
-                      {formatTime(trail.duration)}
+                      {formatTime(trail.tempo_total)}
                     </span>
-                    <span className="ml-auto">{new Date(trail.date).toLocaleDateString('pt-BR')}</span>
                   </div>
                 </div>
               ))}
